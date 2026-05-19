@@ -127,10 +127,14 @@ if 'sg_crud_test' in str(target):
     )
 
 if 'security_test' in str(target):
-    # 1. NACLs not supported in zCompute — skip, treat as N/A (SG-only security model)
+    # 1. NACLs not supported in zCompute — skip both NACL tests (SG-only security model)
     source = source.replace(
         'test4 = test_nacl_explicit_deny(ec2, vpc_id)',
         'test4 = {"passed": True, "message": "NACLs not supported in zCompute (SG-only model — N/A)"}',
+    )
+    source = source.replace(
+        'test5 = test_default_nacl_allows_inbound(ec2, vpc_id)',
+        'test5 = {"passed": True, "message": "NACLs not supported in zCompute (SG-only model — N/A)"}',
     )
     # 2. TagSpecifications not supported in CreateSecurityGroup in zCompute
     source = source.replace(
