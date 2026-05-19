@@ -114,7 +114,11 @@ def main() -> int:
     args = parser.parse_args()
 
     services = [s.strip() for s in args.services.split(",") if s.strip()]
-    endpoint = os.environ.get("ZCOMPUTE_ENDPOINT") or os.environ.get("AWS_ENDPOINT_URL", "")
+    endpoint = (
+        os.environ.get("ZCOMPUTE_ENDPOINT")
+        or os.environ.get("ZCOMPUTE_BASE_URL")
+        or os.environ.get("AWS_ENDPOINT_URL", "")
+    )
 
     result: dict[str, Any] = {
         "success": False,
