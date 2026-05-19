@@ -135,6 +135,15 @@ def _boto3_client_patched(service_name, *args, **kwargs):
             return _orig_get_waiter(waiter_name)
         client.get_waiter = _get_waiter_patched
 
+        # ── Fix create_key_pair: TagSpecifications not supported in zCompute ─
+        # Strips the TagSpecifications param; tags are added via create_tags
+        # after creation if needed (key pairs are internal test resources).
+        _orig_create_key_pair = client.create_key_pair
+        def _create_key_pair_patched(**ckp_kwargs):
+            ckp_kwargs.pop('TagSpecifications', None)
+            return _orig_create_key_pair(**ckp_kwargs)
+        client.create_key_pair = _create_key_pair_patched
+
         # ── Fix run_instances: zCompute returns empty Instances[] on success ─
         # zCompute creates the instance but does not include it in the
         # run_instances response. Also remove NetworkInterfaces (not supported
