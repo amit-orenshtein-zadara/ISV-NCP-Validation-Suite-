@@ -38,20 +38,26 @@ def _disable_via_symp(access_key_id: str) -> dict[str, Any]:
         SYMP_URL      zcompute management URL, e.g. http://172.29.0.20
         SYMP_USER     symp username, e.g. amitor
         SYMP_DOMAIN   symp domain, e.g. amitor
+        SYMP_PROJECT  symp project, e.g. amitor
         SYMP_PASSWORD symp password
     """
     url = os.environ.get("SYMP_URL") or os.environ.get("ZCOMPUTE_BASE_URL", "")
     user = os.environ.get("SYMP_USER", "")
     domain = os.environ.get("SYMP_DOMAIN", "")
+    project = os.environ.get("SYMP_PROJECT", "")
     password = os.environ.get("SYMP_PASSWORD", "")
 
-    missing = [v for v, val in [("SYMP_URL", url), ("SYMP_USER", user), ("SYMP_DOMAIN", domain), ("SYMP_PASSWORD", password)] if not val]
+    missing = [v for v, val in [
+        ("SYMP_URL", url), ("SYMP_USER", user),
+        ("SYMP_DOMAIN", domain), ("SYMP_PROJECT", project),
+        ("SYMP_PASSWORD", password),
+    ] if not val]
     if missing:
         return {
             "success": False,
             "method": "symp_cli",
             "error": f"Missing env vars for symp fallback: {', '.join(missing)}. "
-                     "Set SYMP_URL, SYMP_USER, SYMP_DOMAIN, SYMP_PASSWORD.",
+                     "Set SYMP_URL, SYMP_USER, SYMP_DOMAIN, SYMP_PROJECT, SYMP_PASSWORD.",
         }
 
     cmd = [
@@ -60,6 +66,7 @@ def _disable_via_symp(access_key_id: str) -> dict[str, Any]:
         "-d", domain,
         "-p", password,
         "--url", url,
+        "--project", project,
         "access-key", "update", access_key_id, "False",
     ]
     print(f"[disable] IAM API not implemented — falling back to symp CLI", file=sys.stderr)
