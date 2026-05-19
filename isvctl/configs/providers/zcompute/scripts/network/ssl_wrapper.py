@@ -370,6 +370,10 @@ source_patches = {
     # zCompute: vpc-id filter on describe_instances is ignored — post-filter by VpcId
     '        for instance in reservation["Instances"]:':
         '        for instance in [i for i in reservation["Instances"] if i.get("VpcId") == vpc_id]:  # zCompute: post-filter by VpcId',
+    # zCompute: instance_terminated waiter not reliable — skip it, brief sleep is enough.
+    # delete_with_retry handles any lingering dependency errors.
+    '        waiter = ec2.get_waiter("instance_terminated")\n        waiter.wait(InstanceIds=instance_ids)':
+        '        import time as _tw; _tw.sleep(20)  # zCompute: skip instance_terminated waiter',
     # After deleting VPC, also release any unassociated EIPs tagged CreatedBy=isvtest
     '    deleted["vpc"] = vpc_id\n\n    return deleted':
         '    deleted["vpc"] = vpc_id\n\n'
