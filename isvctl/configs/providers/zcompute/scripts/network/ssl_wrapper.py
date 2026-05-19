@@ -67,6 +67,11 @@ class _ZComputeInstanceWaiter:
                     for r in resp['Reservations']
                     for i in r['Instances']
                 ]
+                # Instance not visible in API — if waiting for terminated,
+                # treat as already gone (zCompute removes terminated instances
+                # from describe results rather than showing 'terminated' state)
+                if not states and self._target == 'terminated':
+                    return
                 if states and all(s == self._target for s in states):
                     return
             except Exception:

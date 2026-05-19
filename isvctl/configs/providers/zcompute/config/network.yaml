@@ -158,7 +158,7 @@ commands:
           - "{{steps.create_network.network_id}}"
           - "--region"
           - "{{region}}"
-        timeout: 600
+        timeout: 1200
         output_schema: teardown
 
 tests:
