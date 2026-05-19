@@ -1,0 +1,157 @@
+# zcompute Network Validation Configuration
+#
+# Imports the provider-agnostic network suite and wires up scripts.
+# Most scripts are the unmodified AWS versions — they work with zCompute's
+# AWS-compatible EC2 API via the per-service endpoint env vars:
+#
+#   export AWS_ENDPOINT_URL_EC2=https://172.29.0.20/api/v2/aws/ec2/
+#
+# Two scripts are zCompute-specific (waiter → poll loop):
+#   create_vpc.py, vpc_crud_test.py
+#
+# Excluded tests (require VMs, or unsupported in zCompute):
+#   - connectivity_test, traffic_validation, dhcp_ip_test — need running instances
+#   - stable_ip_test, floating_ip_test, dns_test — need running instances
+#   - sg_*_scoping — need instances + SSM
+#   - sdn_* logging — CloudWatch/CloudTrail not available
+#   - byoip_test — BYOIP not supported
+#   - backend_switch_fabric, nvlink_domain — not applicable to zCompute
+#
+# zCompute quirks handled:
+#   - Single AZ (symphony) — require_multi_az overridden to false
+#   - No boto3 waiters — adapted scripts use poll loops
+#   - VPC transitions through 'pending' before 'available'
+#
+# Usage:
+#   export ZCOMPUTE_BASE_URL=https://172.29.0.20
+#   export AWS_ENDPOINT_URL_EC2=https://172.29.0.20/api/v2/aws/ec2/
+#   export AWS_ACCESS_KEY_ID=<key>
+#   export AWS_SECRET_ACCESS_KEY=<secret>
+#   export AWS_REGION=symphony
+#   uv run isvctl test run -f isvctl/configs/providers/zcompute/config/network.yaml
+
+import:
+  - ../../../suites/network.yaml
+
+version: "1.0"
+
+commands:
+  network:
+    phases: ["setup", "test", "teardown"]
+    steps:
+      # Setup: Create shared VPC (zCompute version — poll loop instead of waiter)
+      - name: create_network
+        phase: setup
+        command: "python3 ../scripts/network/create_vpc.py"
+        args: ["--name", "isv-shared-vpc", "--region", "{{region}}", "--cidr", "10.0.0.0/16"]
+        timeout: 300
+
+      # Test 1: VPC CRUD (zCompute version — poll loop instead of waiter)
+      - name: vpc_crud
+        phase: test
+        command: "python3 ../scripts/network/vpc_crud_test.py"
+        args: ["--region", "{{region}}", "--cidr", "10.99.0.0/16"]
+        timeout: 120
+        output_schema: vpc_crud
+
+      # Test 2: Subnet Configuration (AWS script — works via AWS_ENDPOINT_URL_EC2)
+      - name: subnet_config
+        phase: test
+        command: "python3 ../../../../aws/scripts/network/subnet_test.py"
+        args: ["--region", "{{region}}", "--cidr", "10.98.0.0/16", "--subnet-count", "2"]
+        timeout: 120
+        output_schema: subnet_config
+
+      # Test 3: VPC Isolation
+      - name: vpc_isolation
+        phase: test
+        command: "python3 ../../../../aws/scripts/network/isolation_test.py"
+        args: ["--region", "{{region}}", "--cidr-a", "10.97.0.0/16", "--cidr-b", "10.96.0.0/16"]
+        timeout: 120
+        output_schema: vpc_isolation
+
+      # Test 4a: Security Group CRUD
+      - name: sg_crud
+        phase: test
+        command: "python3 ../../../../aws/scripts/network/sg_crud_test.py"
+        args: ["--region", "{{region}}", "--cidr", "10.95.0.0/16"]
+        timeout: 120
+        output_schema: sg_crud
+
+      # Test 4b: Security Blocking
+      - name: security_blocking
+        phase: test
+        command: "python3 ../../../../aws/scripts/network/security_test.py"
+        args: ["--region", "{{region}}", "--cidr", "10.94.0.0/16"]
+        timeout: 120
+        output_schema: security_blocking
+
+      # Test 7: VPC IP Configuration (DDI)
+      - name: vpc_ip_config
+        phase: test
+        command: "python3 ../../../../aws/scripts/network/vpc_ip_config_test.py"
+        args:
+          - "--vpc-id"
+          - "{{steps.create_network.network_id}}"
+          - "--region"
+          - "{{region}}"
+        timeout: 120
+        output_schema: vpc_ip_config
+
+      # Test 13: VPC Peering (confirmed working in zCompute)
+      - name: peering_test
+        phase: test
+        command: "python3 ../../../../aws/scripts/network/peering_test.py"
+        args: ["--region", "{{region}}", "--cidr-a", "10.88.0.0/16", "--cidr-b", "10.87.0.0/16"]
+        timeout: 180
+        output_schema: vpc_peering
+
+      # Teardown: AWS script — instance waiter only fires if VMs exist (none here)
+      - name: teardown
+        phase: teardown
+        command: "python3 ../../../../aws/scripts/network/teardown.py"
+        args:
+          - "--vpc-id"
+          - "{{steps.create_network.network_id}}"
+          - "--region"
+          - "{{region}}"
+        timeout: 300
+        output_schema: teardown
+
+tests:
+  cluster_name: "zcompute-network-validation"
+  description: "zCompute network validation: VPC, subnets, SG, isolation, peering"
+
+  settings:
+    region: "symphony"
+
+  validations:
+    network:
+      checks:
+        SubnetConfigCheck:
+          step: subnet_config
+          min_subnets: 1          # single AZ — only 1 subnet created
+          require_multi_az: false  # zCompute has single AZ (symphony)
+
+  exclude:
+    tests:
+      # VM-dependent tests
+      - NetworkConnectivityCheck
+      - TrafficFlowCheck
+      - DhcpIpManagementCheck
+      - StablePrivateIpCheck
+      - FloatingIpCheck
+      - LocalizedDnsCheck
+      # SG scoping requires running instances + SSM
+      - SgWorkloadScopingCheck
+      - SgNodeScopingCheck
+      - SgSubnetScopingCheck
+      - SgServiceScopingCheck
+      # SDN logging — CloudWatch/CloudTrail not in zCompute
+      - SdnHardwareFaultLoggingCheck
+      - SdnLatencyPerfLoggingCheck
+      - SdnFilterAuditTrailCheck
+      # Not supported in zCompute
+      - ByoipCheck
+      - BackendSwitchFabricCheck
+      - NvlinkDomainCheck
