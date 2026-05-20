@@ -87,6 +87,10 @@ def main() -> int:
                 # Skip terminated instances.
                 if inst["State"]["Name"] == "terminated":
                     continue
+                # zCompute ignores vpc-id filter — post-filter in Python.
+                # Also skip instances without a VpcId (system/internal instances).
+                if args.vpc_id and inst.get("VpcId") != args.vpc_id:
+                    continue
 
                 launch_time_raw = inst.get("LaunchTime")
                 launch_time = str(launch_time_raw) if launch_time_raw is not None else None
