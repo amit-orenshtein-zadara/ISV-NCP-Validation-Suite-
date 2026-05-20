@@ -168,6 +168,18 @@ def main() -> int:
         # Create (or reuse) key pair.
         key_file = create_key_pair(ec2, args.key_name)
 
+        # zCompute returns RSA PKCS#1 keys; paramiko's CloudInitCheck requires
+        # OpenSSH format. Convert in-place with ssh-keygen.
+        try:
+            import subprocess as _sp
+            _sp.run(
+                ['ssh-keygen', '-p', '-m', 'OpenSSH', '-f', key_file, '-N', ''],
+                check=True, capture_output=True,
+            )
+            print(f"[launch] key converted to OpenSSH format", file=sys.stderr)
+        except Exception as _e:
+            print(f"[launch] WARNING: key format conversion failed (non-fatal): {_e}", file=sys.stderr)
+
         # Create (or reuse) security group.
         sg_name = f"{args.name}-sg"
         sg_id = create_security_group(ec2, vpc_id, sg_name)
@@ -209,10 +221,47 @@ def main() -> int:
         private_ip = run_resp["Instances"][0].get("PrivateIpAddress")
         print(f"[launch] instance {instance_id} launched", file=sys.stderr)
 
-        # Poll until running.
-        state = poll_instance_state(
-            ec2, instance_id, ["running"], timeout=600, interval=15
-        )
+        # Poll until running — auto-activate if instance falls to shutoff.
+        # zCompute occasionally transitions new instances to shutoff instead of
+        # running (hypervisor scheduling issue). Check every ~60s and start it.
+        import time as _launch_time
+        _deadline = _launch_time.monotonic() + 900  # 15 min total budget
+        state = "pending"
+        while _launch_time.monotonic() < _deadline:
+            try:
+                _resp = ec2.describe_instances(InstanceIds=[instance_id])
+                _instances = [
+                    i for r in _resp.get("Reservations", [])
+                    for i in r.get("Instances", [])
+                    if i["InstanceId"] == instance_id
+                ]
+                state = _instances[0]["State"]["Name"] if _instances else state
+            except Exception:
+                pass
+
+            if state == "running":
+                print(f"[launch] instance {instance_id} is running", file=sys.stderr)
+                break
+            elif state in ("shutoff", "stopped"):
+                print(
+                    f"[launch] instance {instance_id} is {state} — sending start command",
+                    file=sys.stderr,
+                )
+                try:
+                    ec2.start_instances(InstanceIds=[instance_id])
+                except Exception as _e:
+                    print(f"[launch] WARNING: start_instances failed: {_e}", file=sys.stderr)
+            else:
+                print(
+                    f"[launch] waiting for running (current: {state}) ...",
+                    file=sys.stderr,
+                )
+            _launch_time.sleep(60)
+        else:
+            raise RuntimeError(
+                f"Instance {instance_id} did not reach 'running' within 15 min "
+                f"(last state: {state})"
+            )
 
         # Allocate and associate EIP (zcompute does not auto-assign public IPs).
         allocation_id, public_ip = allocate_and_associate_eip(ec2, instance_id)
