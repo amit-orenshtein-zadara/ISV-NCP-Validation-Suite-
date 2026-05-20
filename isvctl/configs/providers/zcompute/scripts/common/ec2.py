@@ -285,16 +285,8 @@ def load_nvidia_modules(host: str, user: str, key_file: str) -> bool:
         )
 
     print(f"[ec2] loading NVIDIA modules on {host} ...", file=sys.stderr)
-    # Force-unload then reload to fix NVML driver/library version mismatch.
-    # Stop persistenced first so the nvidia module is not held open.
-    _ssh("sudo systemctl stop nvidia-persistenced 2>/dev/null || true")
-    _ssh("sudo rmmod nvidia_uvm nvidia_modeset nvidia 2>/dev/null || true")
-    import time as _t; _t.sleep(2)
     result = _ssh("sudo modprobe nvidia nvidia-uvm nvidia-modeset")
     loaded = result.returncode == 0 or "already" in result.stderr.lower()
-    _ssh("sudo systemctl start nvidia-persistenced 2>/dev/null || true")
-    # Give persistenced a moment to finish initializing before nvidia-smi is called
-    _t.sleep(3)
 
     if not loaded and "not found" in result.stderr.lower():
         # Module not built for the current kernel (kernel upgraded since AMI was built).
@@ -472,15 +464,21 @@ def setup_gpu_dependencies(host: str, user: str, key_file: str) -> dict[str, boo
     else:
         print(f"[setup] NVIDIA Container Toolkit install failed: {r.stderr[-300:]}", file=sys.stderr)
 
-    # ── 4. Restore nvidia-utils + symlink ────────────────────────────────────
-    # Detect installed NVIDIA driver version and install matching utils package
-    # to guarantee nvidia-smi is present and symlinked to /usr/local/bin.
+    # ── 4. Ensure nvidia-smi is accessible ───────────────────────────────────
+    # Only install nvidia-utils if nvidia-smi is NOT already working.
+    # Critical: do NOT reinstall after the CUDA apt repo was added (step 2) —
+    # the CUDA repo ships a newer nvidia-utils version that mismatches the
+    # kernel module installed from Ubuntu's default repo.
     print("[setup] ensuring nvidia-smi is accessible ...", file=sys.stderr)
     restore_cmds = (
-        "DRVER=$(dpkg -l | awk '/nvidia-kernel-common-[0-9]/{match($2,/[0-9]+/,m);print m[0];exit}') && "
-        "DRVER=${DRVER:-535} && "
-        "echo \"[setup] installing nvidia-utils-${DRVER}-server\" && "
-        "sudo apt-get install -y --no-install-recommends nvidia-utils-${DRVER}-server 2>&1 | tail -2 && "
+        "if sudo nvidia-smi > /dev/null 2>&1; then "
+        "  echo '[setup] nvidia-smi already working, skipping reinstall'; "
+        "else "
+        "  DRVER=$(dpkg -l | awk '/nvidia-kernel-common-[0-9]/{match($2,/[0-9]+/,m);print m[0];exit}') && "
+        "  DRVER=${DRVER:-535} && "
+        "  echo \"[setup] installing nvidia-utils-${DRVER}-server\" && "
+        "  sudo apt-get install -y --no-install-recommends nvidia-utils-${DRVER}-server 2>&1 | tail -2; "
+        "fi && "
         "NVSMI=$(find /usr /opt -name nvidia-smi -type f 2>/dev/null | head -1) && "
         "echo \"[setup] nvidia-smi at: $NVSMI\" && "
         "[ -n \"$NVSMI\" ] && sudo ln -sf \"$NVSMI\" /usr/local/bin/nvidia-smi || true"
